@@ -1,107 +1,47 @@
-import os
-import sys
-import requests
-# Force Python to look in the current working directory inside Docker
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import boto3
+from botocore.exceptions import NoCredentialsError
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import joblib
-from train_model import generate_and_train
+def upload_csv_to_s3(file_name, bucket_name, object_name=None):
+    """
+    Uploads a CSV file to an AWS S3 bucket.
+    
+    :param file_name: Path to the local file to upload
+    :param bucket_name: Name of the target S3 bucket
+    :param object_name: S3 object name (destination path inside the bucket). 
+                        If not specified, file_name is used.
+    """
+    # If S3 object_name was not specified, use file_name
+    if object_name is None:
+        object_name = file_name
 
-app = FastAPI(title="FastAPI MLOps Service")
-
-# Setup CORS middleware so your HTML file can communicate with the API
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Restrict this in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# MODEL_PATH = 'model (1).joblib' # model name
-
-# # Automatically train the model on startup if it doesn't exist yet
-# if not os.path.exists(MODEL_PATH):
-#     print("Model file not found. Triggering baseline training pipeline...")
-#     generate_and_train()
-
-# model = joblib.load(MODEL_PATH)
-
-
-# ==========================
-# API Gateway URL
-# ==========================
-
-API_GATEWAY_URL = "https://a34n5jhwbh.execute-api.us-east-1.amazonaws.com/predict"
-
-# ==========================
-# Request Model
-# ==========================
-
-class Student(BaseModel):
-    maths: float
-    english: float
-
-
-@app.post("/predict")
-def predict(student: Student):
-
-    payload = student.model_dump()
+    # Initialize the boto3 S3 client
+    # It automatically picks up the credentials you set in 'aws configure'
+    s3_client = boto3.client('s3')
 
     try:
+        print(f"Uploading '{file_name}' to bucket '{bucket_name}'...")
+        
+        # Upload the file
+        s3_client.upload_file(file_name, bucket_name, object_name)
+        
+        print("Upload successful!")
+        return True
+        
+    except FileNotFoundError:
+        print(f"The file '{file_name}' was not found locally.")
+        return False
+    except NoCredentialsError:
+        print("AWS credentials not found. Please run 'aws configure' in your terminal.")
+        return False
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return False
 
-        response = requests.post(
-            API_GATEWAY_URL,
-            json=payload,
-            headers={
-                "Content-Type": "application/json"
-            },
-            timeout=30
-        )
+# --- Execution ---
+if __name__ == "__main__":
+    # Change these variables to match your local setup
+    LOCAL_CSV_FILE = "file.csv"
+    AWS_BUCKET_NAME = "amzn-s3-bucket-sagemaker-rajendra"
+    S3_DESTINATION_NAME = "uploads/file.csv" # Optional: nested folder structure
 
-        response.raise_for_status()
-
-        prediction = response.json()
-
-        return {
-            "status": "success",
-            "prediction": prediction
-        }
-
-    except requests.exceptions.HTTPError as e:
-        raise HTTPException(
-            status_code=response.status_code,
-            detail=response.text
-        )
-
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
-# Define the incoming data schema using Pydantic
-# class HouseFeatures(BaseModel): # 
-#     maths: float
-#     english: float
-#     # num_rooms: float
-    
-# @app.post("/predict")
-# def predict(features: HouseFeatures):
-#     try:
-#         # Perform inference using the validated schema fields
-#         prediction = model.predict([[features.maths, features.english]])
-#         return {
-#             "status": "success",
-#             "estimated_marks": round(float(prediction[0]), 2)
-#         }
-#     except Exception as e:
-#         raise HTTPException(status_code=400, detail=str(e))
-
-if __name__ == '__main__':
-    import uvicorn
-    # Run using uvicorn server instead of native flask development server
-    uvicorn.run(app, host='0.0.0.0', port=5000)
+    upload_csv_to_s3(LOCAL_CSV_FILE, AWS_BUCKET_NAME, S3_DESTINATION_NAME)
